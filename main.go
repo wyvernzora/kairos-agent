@@ -1,15 +1,18 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Masterminds/sprig/v3"
 	"os"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"strings"
+	"text/template"
 
 	"github.com/kairos-io/kairos-agent/v2/pkg/utils"
 
@@ -365,6 +368,54 @@ enabled: true`,
 					return err
 				},
 			},
+		},
+	},
+	{
+		Name:        "render-template",
+		Usage:       "Render a Go template",
+		Description: "Render a Go template with machine state and config as data context",
+		Flags: []cli.Flag{
+			&cli.StringFlag{
+				Name:     "file",
+				Aliases:  []string{"f"},
+				Required: true,
+			},
+		},
+		Action: func(c *cli.Context) error {
+
+			config, err := agentConfig.Scan(collector.Directories(configScanDir...), collector.NoLogs, collector.StrictValidation(c.Bool("strict-validation")))
+			if err != nil {
+				return err
+			}
+
+			runtime, err := state.NewRuntime()
+			if err != nil {
+				return err
+			}
+
+			// Here we marshal to YAML then unmarshal to Map to make it consistent with output of kairos-agent state
+			var runtimeMap map[string]interface{}
+			err = yaml.Unmarshal([]byte(runtime.String()), &runtimeMap)
+
+			path := c.String("file")
+			tpl := template.New(path).Funcs(sprig.FuncMap())
+
+			content, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			tpl = template.Must(tpl.Parse(string(content)))
+			result := new(bytes.Buffer)
+			err = tpl.Execute(result, map[string]interface{}{
+				"Config": config.Config,
+				"State":  runtimeMap,
+			})
+			if err != nil {
+				return err
+			}
+
+			_, err = os.Stdout.Write(result.Bytes())
+			return err
 		},
 	},
 	{
